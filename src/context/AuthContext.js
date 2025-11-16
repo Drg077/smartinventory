@@ -1,5 +1,13 @@
-import React, { createContext, useState, useEffect } from 'react';
-import { getCurrentUser, setCurrentUser as saveCurrentUser, getUsers, storeUser } from '../utils/storage';
+import React, { createContext, useState, useEffect } from "react";
+import {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signOut,
+  onAuthStateChanged,
+  updateProfile,
+} from "firebase/auth";
+import { doc, setDoc, getDoc } from "firebase/firestore";
+import { auth, db } from "../config/firebase";
 
 export const AuthContext = createContext();
 
@@ -8,72 +16,113 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadUser();
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        // Get additional user data from Firestore
+        try {
+          const userDoc = await getDoc(doc(db, "users", firebaseUser.uid));
+          const userData = userDoc.data();
+
+          setUser({
+            id: firebaseUser.uid,
+            uid: firebaseUser.uid,
+            email: firebaseUser.email,
+            name: userData?.name || firebaseUser.displayName,
+            createdAt: userData?.createdAt,
+          });
+        } catch (error) {
+          console.error("Error fetching user data:", error);
+          setUser({
+            id: firebaseUser.uid,
+            uid: firebaseUser.uid,
+            email: firebaseUser.email,
+            name: firebaseUser.displayName,
+          });
+        }
+      } else {
+        setUser(null);
+      }
+      setLoading(false);
+    });
+
+    return unsubscribe;
   }, []);
 
-  const loadUser = async () => {
+  const login = async (email, password) => {
     try {
-      const currentUser = await getCurrentUser();
-      setUser(currentUser);
+      setLoading(true);
+      const userCredential = await signInWithEmailAndPassword(
+        auth,
+        email,
+        password
+      );
+      return { success: true, user: userCredential.user };
     } catch (error) {
-      console.error('Error loading user:', error);
+      console.error("Login error:", error);
+      let errorMessage = "Login failed. Please try again.";
+
+      if (error.code === "auth/user-not-found") {
+        errorMessage = "No account found with this email.";
+      } else if (error.code === "auth/wrong-password") {
+        errorMessage = "Incorrect password.";
+      } else if (error.code === "auth/invalid-email") {
+        errorMessage = "Invalid email address.";
+      }
+
+      return { success: false, error: errorMessage };
     } finally {
       setLoading(false);
     }
   };
 
-  const login = async (email, password) => {
-    try {
-      const users = await getUsers();
-      const foundUser = users.find(u => u.email === email && u.password === password);
-      
-      if (foundUser) {
-        await saveCurrentUser(foundUser);
-        setUser(foundUser);
-        return { success: true, user: foundUser };
-      } else {
-        return { success: false, error: 'Invalid email or password' };
-      }
-    } catch (error) {
-      console.error('Login error:', error);
-      return { success: false, error: 'Login failed. Please try again.' };
-    }
-  };
-
   const register = async (name, email, password) => {
     try {
-      const users = await getUsers();
-      
-      // Check if user already exists
-      if (users.find(u => u.email === email)) {
-        return { success: false, error: 'User with this email already exists' };
-      }
-      
-      const newUser = {
-        id: Date.now().toString(),
+      setLoading(true);
+
+      // Create user in Firebase Auth
+      const userCredential = await createUserWithEmailAndPassword(
+        auth,
+        email,
+        password
+      );
+      const firebaseUser = userCredential.user;
+
+      // Update display name
+      await updateProfile(firebaseUser, { displayName: name });
+
+      // Save additional user data to Firestore
+      await setDoc(doc(db, "users", firebaseUser.uid), {
+        uid: firebaseUser.uid,
         name,
         email,
-        password, // In production, this should be hashed
-        createdAt: new Date().toISOString(),
-      };
-      
-      await storeUser(newUser);
-      await saveCurrentUser(newUser);
-      setUser(newUser);
-      
-      return { success: true, user: newUser };
+        createdAt: new Date(),
+        lastLogin: new Date(),
+      });
+
+      return { success: true, user: firebaseUser };
     } catch (error) {
-      console.error('Register error:', error);
-      return { success: false, error: 'Registration failed. Please try again.' };
+      console.error("Register error:", error);
+      let errorMessage = "Registration failed. Please try again.";
+
+      if (error.code === "auth/email-already-in-use") {
+        errorMessage = "An account with this email already exists.";
+      } else if (error.code === "auth/weak-password") {
+        errorMessage = "Password should be at least 6 characters.";
+      } else if (error.code === "auth/invalid-email") {
+        errorMessage = "Invalid email address.";
+      }
+
+      return { success: false, error: errorMessage };
+    } finally {
+      setLoading(false);
     }
   };
 
   const logout = async () => {
     try {
-      await saveCurrentUser(null);
-      setUser(null);
+      await signOut(auth);
     } catch (error) {
-      console.error('Logout error:', error);
+      console.error("Logout error:", error);
     }
   };
 

@@ -1,7 +1,19 @@
-import React, { createContext, useState, useEffect, useContext } from 'react';
-import { getInventory, saveInventory } from '../utils/storage';
-import { scheduleLowStockNotification } from '../utils/notifications';
-import { AuthContext } from './AuthContext';
+import React, { createContext, useState, useEffect, useContext } from "react";
+import {
+  collection,
+  query,
+  orderBy,
+  onSnapshot,
+  doc,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  serverTimestamp,
+} from "firebase/firestore";
+import { db } from "../config/firebase";
+import { scheduleLowStockNotification } from "../utils/notifications";
+import { AuthContext } from "./AuthContext";
+import apiService from "../services/api";
 
 export const InventoryContext = createContext();
 
@@ -20,102 +32,81 @@ export const InventoryProvider = ({ children }) => {
 
   const loadInventory = async () => {
     if (!user) return;
-    
+
     setLoading(true);
     try {
-      const inventory = await getInventory(user.id);
-      setItems(inventory);
+      // Use real-time listener for inventory items
+      const inventoryRef = collection(db, "inventory", user.uid, "items");
+      const q = query(inventoryRef, orderBy("createdAt", "desc"));
+
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const inventoryItems = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+        setItems(inventoryItems);
+        setLoading(false);
+      });
+
+      // Return unsubscribe function for cleanup
+      return unsubscribe;
     } catch (error) {
-      console.error('Error loading inventory:', error);
-    } finally {
+      console.error("Error loading inventory:", error);
       setLoading(false);
     }
   };
 
   const addItem = async (item) => {
-    if (!user) return { success: false, error: 'User not logged in' };
-    
+    if (!user) return { success: false, error: "User not logged in" };
+
     try {
-      const newItem = {
-        id: Date.now().toString(),
-        ...item,
-        createdAt: new Date().toISOString(),
-      };
-      
-      const updatedItems = [...items, newItem];
-      await saveInventory(user.id, updatedItems);
-      setItems(updatedItems);
-      
-      // Check for low stock
-      checkLowStock(newItem);
-      
-      return { success: true, item: newItem };
+      const result = await apiService.addInventoryItem(item);
+      return result;
     } catch (error) {
-      console.error('Error adding item:', error);
-      return { success: false, error: 'Failed to add item' };
+      console.error("Error adding item:", error);
+      return { success: false, error: error.message || "Failed to add item" };
     }
   };
 
   const updateItem = async (id, updates) => {
-    if (!user) return { success: false, error: 'User not logged in' };
-    
+    if (!user) return { success: false, error: "User not logged in" };
+
     try {
-      const updatedItems = items.map(item => 
-        item.id === id ? { ...item, ...updates, updatedAt: new Date().toISOString() } : item
-      );
-      
-      await saveInventory(user.id, updatedItems);
-      setItems(updatedItems);
-      
-      // Check for low stock
-      const updatedItem = updatedItems.find(item => item.id === id);
-      if (updatedItem) {
-        checkLowStock(updatedItem);
-      }
-      
-      return { success: true };
+      const result = await apiService.updateInventoryItem(id, updates);
+      return result;
     } catch (error) {
-      console.error('Error updating item:', error);
-      return { success: false, error: 'Failed to update item' };
+      console.error("Error updating item:", error);
+      return {
+        success: false,
+        error: error.message || "Failed to update item",
+      };
     }
   };
 
   const deleteItem = async (id) => {
-    if (!user) return { success: false, error: 'User not logged in' };
-    
+    if (!user) return { success: false, error: "User not logged in" };
+
     try {
-      const updatedItems = items.filter(item => item.id !== id);
-      await saveInventory(user.id, updatedItems);
-      setItems(updatedItems);
-      
+      await apiService.deleteInventoryItem(id);
       return { success: true };
     } catch (error) {
-      console.error('Error deleting item:', error);
-      return { success: false, error: 'Failed to delete item' };
+      console.error("Error deleting item:", error);
+      return {
+        success: false,
+        error: error.message || "Failed to delete item",
+      };
     }
   };
 
   const addMultipleItems = async (newItems) => {
-    if (!user) return { success: false, error: 'User not logged in' };
-    
+    if (!user) return { success: false, error: "User not logged in" };
+
     try {
-      const itemsWithIds = newItems.map(item => ({
-        id: `${Date.now()}-${Math.random()}`,
-        ...item,
-        createdAt: new Date().toISOString(),
-      }));
-      
-      const updatedItems = [...items, ...itemsWithIds];
-      await saveInventory(user.id, updatedItems);
-      setItems(updatedItems);
-      
-      // Check for low stock on all new items
-      itemsWithIds.forEach(item => checkLowStock(item));
-      
-      return { success: true, items: itemsWithIds };
+      const result = await apiService.addMultipleItems(newItems);
+      return result;
     } catch (error) {
-      console.error('Error adding multiple items:', error);
-      return { success: false, error: 'Failed to add items' };
+      console.error("Error adding multiple items:", error);
+      return { success: false, error: error.message || "Failed to add items" };
     }
   };
 
@@ -132,10 +123,15 @@ export const InventoryProvider = ({ children }) => {
   // Calculate statistics
   const getStats = () => {
     const totalItems = items.length;
-    const totalValue = items.reduce((sum, item) => sum + (item.quantity * (item.price || 0)), 0);
-    const lowStockItems = items.filter(item => item.quantity <= (item.minStock || 0));
-    const outOfStockItems = items.filter(item => item.quantity === 0);
-    
+    const totalValue = items.reduce(
+      (sum, item) => sum + item.quantity * (item.price || 0),
+      0
+    );
+    const lowStockItems = items.filter(
+      (item) => item.quantity <= (item.minStock || 0)
+    );
+    const outOfStockItems = items.filter((item) => item.quantity === 0);
+
     return {
       totalItems,
       totalValue: totalValue.toFixed(2),
