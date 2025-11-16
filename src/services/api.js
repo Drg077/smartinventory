@@ -1,9 +1,8 @@
 import { auth } from "../config/firebase";
 
-// Your Firebase Cloud Functions base URL
-// Replace with your actual functions URL
-const API_BASE_URL =
-  "https://your-region-your-project-id.cloudfunctions.net/api";
+// Your Node.js backend base URL
+// Replace with your actual backend URL
+const API_BASE_URL = "http://localhost:5000/api";
 
 class ApiService {
   async getAuthToken() {

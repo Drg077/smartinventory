@@ -6,8 +6,9 @@ import {
   onAuthStateChanged,
   updateProfile,
 } from "firebase/auth";
-import { doc, setDoc, getDoc } from "firebase/firestore";
-import { auth, db } from "../config/firebase";
+// Remove Firestore imports since we're using Node.js backend now
+// import { doc, setDoc, getDoc } from "firebase/firestore";
+import { auth } from "../config/firebase";
 
 export const AuthContext = createContext();
 
@@ -18,27 +19,14 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        // Get additional user data from Firestore
-        try {
-          const userDoc = await getDoc(doc(db, "users", firebaseUser.uid));
-          const userData = userDoc.data();
-
-          setUser({
-            id: firebaseUser.uid,
-            uid: firebaseUser.uid,
-            email: firebaseUser.email,
-            name: userData?.name || firebaseUser.displayName,
-            createdAt: userData?.createdAt,
-          });
-        } catch (error) {
-          console.error("Error fetching user data:", error);
-          setUser({
-            id: firebaseUser.uid,
-            uid: firebaseUser.uid,
-            email: firebaseUser.email,
-            name: firebaseUser.displayName,
-          });
-        }
+        // Set user data from Firebase Auth only
+        setUser({
+          id: firebaseUser.uid,
+          uid: firebaseUser.uid,
+          email: firebaseUser.email,
+          name: firebaseUser.displayName || firebaseUser.email.split("@")[0],
+          photoURL: firebaseUser.photoURL,
+        });
       } else {
         setUser(null);
       }
@@ -90,14 +78,8 @@ export const AuthProvider = ({ children }) => {
       // Update display name
       await updateProfile(firebaseUser, { displayName: name });
 
-      // Save additional user data to Firestore
-      await setDoc(doc(db, "users", firebaseUser.uid), {
-        uid: firebaseUser.uid,
-        name,
-        email,
-        createdAt: new Date(),
-        lastLogin: new Date(),
-      });
+      // User data will be automatically created in MongoDB by the backend
+      // when they make their first authenticated request
 
       return { success: true, user: firebaseUser };
     } catch (error) {

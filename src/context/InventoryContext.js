@@ -1,16 +1,17 @@
 import React, { createContext, useState, useEffect, useContext } from "react";
-import {
-  collection,
-  query,
-  orderBy,
-  onSnapshot,
-  doc,
-  addDoc,
-  updateDoc,
-  deleteDoc,
-  serverTimestamp,
-} from "firebase/firestore";
-import { db } from "../config/firebase";
+// Remove Firestore imports since we're using Node.js backend now
+// import {
+//   collection,
+//   query,
+//   orderBy,
+//   onSnapshot,
+//   doc,
+//   addDoc,
+//   updateDoc,
+//   deleteDoc,
+//   serverTimestamp,
+// } from "firebase/firestore";
+// import { db } from "../config/firebase";
 import { scheduleLowStockNotification } from "../utils/notifications";
 import { AuthContext } from "./AuthContext";
 import apiService from "../services/api";
@@ -35,23 +36,15 @@ export const InventoryProvider = ({ children }) => {
 
     setLoading(true);
     try {
-      // Use real-time listener for inventory items
-      const inventoryRef = collection(db, "inventory", user.uid, "items");
-      const q = query(inventoryRef, orderBy("createdAt", "desc"));
-
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const inventoryItems = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-        setItems(inventoryItems);
-        setLoading(false);
-      });
-
-      // Return unsubscribe function for cleanup
-      return unsubscribe;
+      // Fetch inventory items from Node.js backend
+      const response = await apiService.getInventory();
+      if (response.success) {
+        setItems(response.items || []);
+      }
     } catch (error) {
       console.error("Error loading inventory:", error);
+      setItems([]);
+    } finally {
       setLoading(false);
     }
   };
